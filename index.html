@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeraAi</title>
+  <style>
+    :root{--bg:#000;--panel:#111;--muted:#bbb;--accent:#00c2ff;--teamAccent:#ffd166}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:#fff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;display:flex;flex-direction:column;align-items:center;gap:18px;padding:18px}
+    h1{margin:0;font-size:28px;font-weight:700}
+
+    #gameSetup{width:100%;max-width:760px;background:linear-gradient(180deg,var(--panel),#0b0b0b);padding:14px;border-radius:12px;border:1px solid rgba(255,255,255,0.04);display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+    .form-group{display:flex;gap:8px;align-items:center}
+    label{font-size:13px;color:var(--muted)}
+    input[type=text],select{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 10px;border-radius:8px;color:#fff}
+    button{background:transparent;border:1px solid rgba(255,255,255,0.08);color:#fff;padding:10px 14px;border-radius:10px;cursor:pointer}
+    button.primary{background:var(--accent);border:none;color:#012427}
+
+    /* new small layout for names */
+    #namesWrap{display:flex;gap:10px;align-items:center}
+    .nameBox{display:flex;flex-direction:column;gap:6px}
+    .nameBox input{min-width:160px}
+
+    #boardWrap{width:100%;max-width:760px;display:flex;flex-direction:column;gap:12px;align-items:center}
+    #chessBoard{display:grid;grid-template-columns:repeat(8,1fr);aspect-ratio:1/1;width:100%;max-width:760px;border-radius:12px;overflow:hidden;border:3px solid rgba(255,255,255,0.04)}
+    .square{display:flex;align-items:center;justify-content:center;font-size:28px;user-select:none}
+    .light{background:#fff;color:#000}
+    .dark{background:#222;color:#fff}
+    .highlight{outline:4px solid rgba(255,193,7,0.14);box-shadow:inset 0 0 40px rgba(0,0,0,0.08)}
+    .selected{outline:4px solid rgba(0,194,255,0.18)}
+
+    #info{width:100%;max-width:760px;display:flex;justify-content:space-between;color:var(--muted);font-size:14px}
+
+    @media (max-width:600px){h1{font-size:20px} #gameSetup{flex-direction:column;align-items:stretch} #chessBoard{max-width:420px} #namesWrap{flex-direction:column;align-items:stretch}}
+  </style>
+</head>
+<body>
+  
+  <a href="https://www.youtube.com/" target="_blank" class="title-link" style="color: white; text-decoration: none;">
+    <h1>MeraAi</h1>
+  </a>
+
+  <div id="gameSetup">
+    <div class="form-group">
+      <label for="mode">Mode:</label>
+      <select id="mode">
+        <option value="solo">Solo (vs AI)</option>
+        <option value="duo">Duo (Local)</option>
+      </select>
+    </div>
+
+    <div id="namesWrap">
+      <!-- these inputs will be toggled by JS depending on mode -->
+      <div class="nameBox" id="singleNameBox">
+        <label for="playerName">Player:</label>
+        <input id="playerName" type="text" placeholder="Your name (optional)" />
+      </div>
+
+      <div class="nameBox" id="duoNamesBox" style="display:none">
+        <label for="whiteName">White (Player A):</label>
+        <input id="whiteName" type="text" placeholder="White player's name" />
+        <label for="blackName">Black (Player B):</label>
+        <input id="blackName" type="text" placeholder="Black player's name" />
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="team">Team:</label>
+      <select id="team">
+        <option value="white">White ♖</option>
+        <option value="black">Black ♜</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <button id="startBtn" class="primary">Start Game</button>
+      <button id="resetBtn">Reset</button>
+    </div>
+  </div>
+
+  <div id="boardWrap">
+    <div id="chessBoard" role="application" aria-label="Chessboard"></div>
+    <div id="info"><div id="turnInfo">Ready</div><div id="notes" style="color:var(--muted)"></div></div>
+  </div>
+
+  <script>
+    // ======= Robust chessboard initialization & fixes =======
+    const boardEl = document.getElementById('chessBoard');
+    const turnInfo = document.getElementById('turnInfo');
+    const notes = document.getElementById('notes');
+    const startBtn = document.getElementById('startBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const modeSelect = document.getElementById('mode');
+    const teamSelect = document.getElementById('team');
+
+    const singleNameBox = document.getElementById('singleNameBox');
+    const duoNamesBox = document.getElementById('duoNamesBox');
+    const playerNameInput = document.getElementById('playerName');
+    const whiteNameInput = document.getElementById('whiteName');
+    const blackNameInput = document.getElementById('blackName');
+
+    // initial layout
+    const initialBoard = [
+      ['r','n','b','q','k','b','n','r'],
+      ['p','p','p','p','p','p','p','p'],
+      ['','','','','','','',''],
+      ['','','','','','','',''],
+      ['','','','','','','',''],
+      ['','','','','','','',''],
+      ['P','P','P','P','P','P','P','P'],
+      ['R','N','B','Q','K','B','N','R']
+    ];
+
+    // ensure board is always valid: initialize immediately
+    let board = JSON.parse(JSON.stringify(initialBoard));
+    let currentPlayer = 'white';
+    let selected = null; // {row,col}
+    let mode = 'solo';
+
+    // player names mapping
+    let whiteName = 'White';
+    let blackName = 'Black';
+
+    // helpers
+    const pieceSymbols = {K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙', k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟︎'};
+    function getPieceSymbol(piece){ return piece ? (pieceSymbols[piece]||piece) : '' }
+
+    // render with safety checks
+    function renderBoard(){
+      // ensure board is correctly shaped
+      if(!Array.isArray(board) || !Array.isArray(board[0])){ board = JSON.parse(JSON.stringify(initialBoard)); }
+      boardEl.innerHTML = '';
+      // create 8x8 squares
+      for(let r=0;r<8;r++){
+        for(let c=0;c<8;c++){
+          const sq = document.createElement('div');
+          sq.className = 'square ' + (((r+c)%2===0)?'light':'dark');
+          sq.dataset.row = r; sq.dataset.col = c;
+          // accessible coord label for smaller screens
+          sq.setAttribute('aria-label', String.fromCharCode(97+c) + (8-r));
+          // piece
+          const piece = (board[r] && typeof board[r][c] !== 'undefined') ? board[r][c] : '';
+          sq.textContent = getPieceSymbol(piece);
+          sq.addEventListener('click', onSquareClick);
+          boardEl.appendChild(sq);
+        }
+      }
+      // highlight selected if any
+      if(selected){ const idx = selected.row*8 + selected.col; const el = boardEl.children[idx]; if(el) el.classList.add('selected'); }
+
+      // show whose turn with name
+      const nameFor = currentPlayer === 'white' ? whiteName : blackName;
+      turnInfo.textContent = currentPlayer.charAt(0).toUpperCase() + currentPlayer.slice(1) + " (" + nameFor + ") to move";
+
+      // apply any team tint after rendering
+      applyTeamTint();
+    }
+
+    function clearHighlights(){ for(const s of boardEl.children){ s.classList.remove('highlight'); s.classList.remove('selected'); s.style.boxShadow=''; }}
+
+    function onSquareClick(e){
+      const sq = e.currentTarget; const r = Number(sq.dataset.row); const c = Number(sq.dataset.col);
+      const piece = (board[r] && typeof board[r][c] !== 'undefined') ? board[r][c] : '';
+
+      // if nothing selected, pick up a piece of current color
+      if(!selected){
+        if(!piece) return; // empty square
+        const isWhitePiece = /[A-Z]/.test(piece);
+        if((currentPlayer==='white' && !isWhitePiece) || (currentPlayer==='black' && isWhitePiece)) return; // wrong color
+        selected = {row:r,col:c};
+        clearHighlights();
+        sq.classList.add('selected');
+        // very simple highlight: show all squares as possible targets (no legal move calc here)
+        highlightPossibleMoves(r,c);
+        return;
+      }
+
+      // if clicking same square, cancel selection
+      if(selected.row===r && selected.col===c){ selected=null; clearHighlights(); renderBoard(); return; }
+
+      // attempt move (no complex rules yet)
+      movePiece(selected.row, selected.col, r, c);
+      selected = null; clearHighlights(); renderBoard();
+
+      // if solo mode and it's AI's turn, do a simple random reply to keep play going
+      if(mode==='solo'){
+        // AI moves only when it's the AI's color to move
+        setTimeout(()=>{ simpleAIMove(); }, 250);
+      }
+    }
+
+    function highlightPossibleMoves(r,c){
+      // naive: highlight all squares that are empty or contain opponent piece
+      for(let rr=0; rr<8; rr++) for(let cc=0; cc<8; cc++){
+        const target = board[rr] && board[rr][cc] ? board[rr][cc] : '';
+        const fromPiece = board[r] && board[r][c] ? board[r][c] : '';
+        if(!fromPiece) continue;
+        const fromIsWhite = /[A-Z]/.test(fromPiece);
+        const targetIsWhite = target ? /[A-Z]/.test(target) : null;
+        if(!target || (fromIsWhite && !targetIsWhite) || (!fromIsWhite && targetIsWhite)){
+          const idx = rr*8+cc; if(boardEl.children[idx]) boardEl.children[idx].classList.add('highlight');
+        }
+      }
+    }
+
+    function movePiece(fr,fc,tr,tc){
+      // basic move validation: cannot capture own piece
+      const from = board[fr] && board[fr][fc] ? board[fr][fc] : '';
+      if(!from) return;
+      const to = board[tr] && board[tr][tc] ? board[tr][tc] : '';
+      const fromIsWhite = /[A-Z]/.test(from);
+      const toIsWhite = to ? /[A-Z]/.test(to) : null;
+      if(to && ((fromIsWhite && toIsWhite) || (!fromIsWhite && toIsWhite===false))) return; // capturing own
+
+      // move
+      board[tr][tc] = board[fr][fc]; board[fr][fc] = '';
+      // toggle player
+      currentPlayer = currentPlayer === 'white' ? 'black' : 'white';
+      const nameFor = currentPlayer === 'white' ? whiteName : blackName;
+      turnInfo.textContent = currentPlayer.charAt(0).toUpperCase() + currentPlayer.slice(1) + " (" + nameFor + ") to move";
+    }
+
+    // Very simple AI that picks a random valid-looking move (keeps gameplay flowing)
+    function simpleAIMove(){
+      if(mode !== 'solo') return;
+      // determine AI color (opposite of player's selected team)
+      const playerColor = teamSelect.value === 'white' ? 'white' : 'black';
+      const aiColor = playerColor === 'white' ? 'black' : 'white';
+      // only act when it's AI's turn
+      if(currentPlayer !== aiColor) return;
+
+      // find all pieces for currentPlayer then random move
+      const moves = [];
+      for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+        const p = board[r][c]; if(!p) continue;
+        const isWhite = /[A-Z]/.test(p);
+        if((currentPlayer==='white' && isWhite) || (currentPlayer==='black' && !isWhite)){
+          // add any target that is empty or opponent
+          for(let tr=0;tr<8;tr++) for(let tc=0;tc<8;tc++){
+            const tgt = board[tr][tc];
+            const tgtIsWhite = tgt ? /[A-Z]/.test(tgt) : null;
+            if(!tgt || tgtIsWhite !== isWhite) moves.push({from:[r,c],to:[tr,tc]});
+          }
+        }
+      }
+      if(moves.length===0) return;
+      const pick = moves[Math.floor(Math.random()*moves.length)];
+      movePiece(pick.from[0], pick.from[1], pick.to[0], pick.to[1]);
+      renderBoard();
+    }
+
+    // Start / reset logic
+    function startGame(){
+      board = JSON.parse(JSON.stringify(initialBoard));
+      mode = modeSelect.value;
+
+      // read names depending on mode
+      if(mode === 'solo'){
+        const p = (playerNameInput.value || '').trim();
+        if(p) whiteName = p; else whiteName = 'You';
+        blackName = 'MeraAI';
+      } else {
+        whiteName = (whiteNameInput.value || '').trim() || 'Player A';
+        blackName = (blackNameInput.value || '').trim() || 'Player B';
+      }
+
+      // set current player to white always at start
+      currentPlayer = 'white';
+      selected = null;
+      renderBoard();
+      notes.textContent = mode==='solo' ? 'Solo mode: simple AI will respond. Use the Player input to name yourself.' : 'Duo mode: local two-player — edit both names.';
+
+      // make chosen team more visible by tinting squares of that color slightly
+      applyTeamTint();
+
+      // if solo and player chose black, AI (white) should make the first move
+      if(mode === 'solo' && teamSelect.value === 'black'){
+        setTimeout(()=>{ simpleAIMove(); }, 350);
+      }
+    }
+
+    function resetGame(){ board = JSON.parse(JSON.stringify(initialBoard)); currentPlayer='white'; selected=null; renderBoard(); notes.textContent='Board reset.' }
+
+    function applyTeamTint(){
+      // remove any previous inline styles
+      if(!boardEl.children) return;
+      for(const s of boardEl.children){ s.style.boxShadow=''; }
+      const team = teamSelect.value;
+      if(team==='white'){
+        // tint white's starting rank (row 7)
+        for(let c=0;c<8;c++){ const idx = 7*8 + c; const el = boardEl.children[idx]; if(el) el.style.boxShadow = 'inset 0 0 40px rgba(255,209,102,0.06)'; }
+      } else {
+        for(let c=0;c<8;c++){ const idx = 0*8 + c; const el = boardEl.children[idx]; if(el) el.style.boxShadow = 'inset 0 0 40px rgba(124,92,255,0.06)'; }
+      }
+    }
+
+    // Event wiring
+    startBtn.addEventListener('click', startGame);
+    resetBtn.addEventListener('click', resetGame);
+    teamSelect.addEventListener('change', ()=>{ applyTeamTint(); });
+    modeSelect.addEventListener('change', ()=>{
+      // toggle name inputs when mode changes
+      if(modeSelect.value === 'duo'){
+        singleNameBox.style.display = 'none';
+        duoNamesBox.style.display = 'flex';
+      } else {
+        singleNameBox.style.display = 'flex';
+        duoNamesBox.style.display = 'none';
+      }
+    });
+
+    // Initialize on load so renderBoard doesn't run against undefined board
+    window.addEventListener('load', ()=>{ startGame(); });
+    // keep board responsive (re-render on resize to keep layout neat)
+    window.addEventListener('resize', ()=>{ renderBoard(); applyTeamTint(); });
+  </script>
+</body>
+</html>
